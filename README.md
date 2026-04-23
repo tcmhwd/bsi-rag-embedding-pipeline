@@ -137,6 +137,8 @@ If you use this code, please cite:
 
 > [citation to be added upon publication]
 
+Code repository: https://github.com/tcmhwd/bsi-rag-embedding-pipeline (doi: 10.5281/zenodo.19702160)
+
 ---
 
 ## License
