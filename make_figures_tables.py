@@ -9,17 +9,24 @@ analysis outputs. Reads from clustering, interpretability, trajectory, and
 comparator output directories.
 
 Figures produced:
-  - Fig 1: UMAP scatter colored by cluster label
-  - Fig 2: UMAP scatter colored by selected clinical variables (mortality, CCI, etc.)
-  - Fig 3: Cumulative incidence curves by cluster (competing-risk)
-  - Fig 4: SHAP summary / beeswarm per cluster
-  - Fig S1: HDBSCAN hyperparameter sensitivity grid
-  - Fig S2: PFI bar chart
+  Figure 1: Study workflow (note: schematic workflow figures may require manual
+             assembly outside this script)
+  Figure 2: Embedding-derived and structured-variable phenotype spaces
+             (UMAP visualizations)
+  Figure 3: Microbiological and clinical interpretability of embedding-derived
+             phenotypes (SHAP, phenotype characterization)
+  Figure 4: In-hospital mortality trajectories with discharge treated as a
+             competing event (cumulative incidence curves)
+  Figure 5: Early and late in-hospital mortality associations
+  Supplementary figures: sensitivity analyses, within-pathogen E. coli analysis,
+             structured-variable comparator analyses
 
 Tables produced:
-  - Table 1: Cluster characterization (demographics, severity, microbiology)
-  - Table 2: Structured-variable comparator CV performance
-  - Table S1: Fine-Gray results
+  Table 1: Baseline cohort characteristics
+  Table 2: Phenotype characterization
+  Table 3: Comparator concordance
+  Table 4: Supervised back-mapping performance
+  Table 5: Mortality model estimates
 
 Usage:
   python make_figures_tables.py \\
@@ -29,6 +36,8 @@ Usage:
     --comparators-dir ./comparators_out \\
     --feature-csv ./data/admission_level_base.csv \\
     --out-dir ./figures_tables \\
+    --supervised-backmapping-dir ./backmapping_out \\
+    --ecoli-dir ./ecoli_out \\
     --dpi 300 \\
     --format pdf
 """
@@ -44,14 +53,27 @@ import pandas as pd
 
 def parse_args():
     p = argparse.ArgumentParser(description="Generate manuscript figures and tables.")
-    p.add_argument("--clustering-dir", type=str, required=True)
-    p.add_argument("--interpretability-dir", type=str, required=True)
-    p.add_argument("--trajectories-dir", type=str, required=True)
-    p.add_argument("--comparators-dir", type=str, required=True)
-    p.add_argument("--feature-csv", type=str, default=None)
-    p.add_argument("--out-dir", type=str, required=True)
-    p.add_argument("--dpi", type=int, default=300)
-    p.add_argument("--format", type=str, default="pdf", choices=["pdf", "svg", "png"])
+    p.add_argument("--clustering-dir", type=str, required=True,
+                   help="Directory with clustering outputs (hdbscan_labels.csv, "
+                        "umap_2d_for_visualization.csv, cluster_summary.csv)")
+    p.add_argument("--interpretability-dir", type=str, required=True,
+                   help="Directory with phenotype_interpretability.py outputs")
+    p.add_argument("--trajectories-dir", type=str, required=True,
+                   help="Directory with mortality_trajectory_analysis.py outputs")
+    p.add_argument("--comparators-dir", type=str, required=True,
+                   help="Directory with structured_variable_clustering_comparators.py outputs")
+    p.add_argument("--feature-csv", type=str, default=None,
+                   help="Optional: admission_level_base.csv for cohort characterization tables")
+    p.add_argument("--out-dir", type=str, required=True,
+                   help="Directory to write all figures and tables")
+    p.add_argument("--supervised-backmapping-dir", type=str, default=None,
+                   help="Optional: supervised_backmapping.py output directory")
+    p.add_argument("--ecoli-dir", type=str, default=None,
+                   help="Optional: ecoli_within_pathogen_analysis.py output directory")
+    p.add_argument("--dpi", type=int, default=300,
+                   help="Figure resolution in DPI (default: 300)")
+    p.add_argument("--format", type=str, default="pdf", choices=["pdf", "svg", "png"],
+                   help="Figure output format (default: pdf)")
     return p.parse_args()
 
 
@@ -61,38 +83,89 @@ def load_inputs(args):
     traj_dir = Path(args.trajectories_dir)
     comp_dir = Path(args.comparators_dir)
 
+    # Updated output file names to match revised pipeline
     labels_csv = clustering_dir / "hdbscan_labels.csv"
-    umap_2d_npy = clustering_dir / "umap_2d.npy"
+    umap_2d_csv = clustering_dir / "umap_2d_for_visualization.csv"
     cluster_summary_csv = clustering_dir / "cluster_summary.csv"
     ci_csv = traj_dir / "cumulative_incidence.csv"
-    fg_csv = traj_dir / "finegray_results.csv"
-    surv_summary_csv = traj_dir / "cluster_survival_summary.csv"
+    gray_csv = traj_dir / "gray_test_results.csv"
+    cox_csv = traj_dir / "cause_specific_cox_results.csv"
+    cluster_mortality_csv = traj_dir / "cluster_mortality_summary.csv"
+    early_mortality_csv = traj_dir / "early_mortality_summary.csv"
+    late_mortality_csv = traj_dir / "late_mortality_summary.csv"
     shap_csv = interp_dir / "shap_summary_per_cluster.csv"
     pfi_csv = interp_dir / "pfi_results.csv"
     feat_names_json = interp_dir / "feature_names.json"
-    comp_csv = comp_dir / "comparator_cv_results.csv"
+    concordance_csv = comp_dir / "concordance_results.csv"
 
     data = {}
     for name, path in [
-        ("labels", labels_csv), ("cluster_summary", cluster_summary_csv),
-        ("ci", ci_csv), ("fg", fg_csv), ("surv_summary", surv_summary_csv),
-        ("shap_summary", shap_csv), ("pfi", pfi_csv), ("comp_results", comp_csv),
+        ("labels", labels_csv),
+        ("cluster_summary", cluster_summary_csv),
+        ("ci", ci_csv),
+        ("gray_test", gray_csv),
+        ("cox_results", cox_csv),
+        ("cluster_mortality_summary", cluster_mortality_csv),
+        ("early_mortality", early_mortality_csv),
+        ("late_mortality", late_mortality_csv),
+        ("shap_summary", shap_csv),
+        ("pfi", pfi_csv),
+        ("concordance", concordance_csv),
     ]:
         if path.exists():
             data[name] = pd.read_csv(path)
         else:
             print(f"[WARN] Not found, skipping: {path}")
 
-    if umap_2d_npy.exists():
-        data["umap_2d"] = np.load(umap_2d_npy)
+    # 2D UMAP visualization coordinates (from revised output naming)
+    if umap_2d_csv.exists():
+        data["umap_2d_df"] = pd.read_csv(umap_2d_csv)
+    else:
+        print(f"[WARN] Not found, skipping: {umap_2d_csv}")
 
     if feat_names_json.exists():
         data["feature_names"] = json.loads(feat_names_json.read_text())
+
+    # Optional: supervised backmapping
+    if args.supervised_backmapping_dir:
+        bm_dir = Path(args.supervised_backmapping_dir)
+        bm_cv = bm_dir / "backmapping_cv_results.csv"
+        bm_fi = bm_dir / "feature_importance_lgbm.csv"
+        bm_class = bm_dir / "class_level_performance.csv"
+        for name, path in [
+            ("backmapping_cv", bm_cv),
+            ("backmapping_fi", bm_fi),
+            ("backmapping_class_perf", bm_class),
+        ]:
+            if path.exists():
+                data[name] = pd.read_csv(path)
+            else:
+                print(f"[WARN] Not found (backmapping), skipping: {path}")
+
+    # Optional: E. coli within-pathogen analysis
+    if args.ecoli_dir:
+        ecoli_dir = Path(args.ecoli_dir)
+        ecoli_labels = ecoli_dir / "ecoli_hdbscan_labels.csv"
+        ecoli_umap2d = ecoli_dir / "ecoli_umap_2d_for_visualization.csv"
+        ecoli_summary = ecoli_dir / "ecoli_cluster_summary.csv"
+        for name, path in [
+            ("ecoli_labels", ecoli_labels),
+            ("ecoli_umap_2d", ecoli_umap2d),
+            ("ecoli_cluster_summary", ecoli_summary),
+        ]:
+            if path.exists():
+                data[name] = pd.read_csv(path)
+            else:
+                print(f"[WARN] Not found (ecoli), skipping: {path}")
 
     return data
 
 
 def make_umap_cluster_figure(data: dict, out_dir: Path, dpi: int, fmt: str):
+    """Generate Figure 2 panels: embedding-derived UMAP scatter colored by cluster label.
+
+    Figure 2: Embedding-derived and structured-variable phenotype spaces (UMAP visualizations).
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -101,13 +174,16 @@ def make_umap_cluster_figure(data: dict, out_dir: Path, dpi: int, fmt: str):
         print("[WARN] matplotlib not installed; skipping UMAP figure.", file=sys.stderr)
         return
 
-    umap_2d = data.get("umap_2d")
+    umap_2d_df = data.get("umap_2d_df")
     labels_df = data.get("labels")
-    if umap_2d is None or labels_df is None:
-        print("[WARN] Missing UMAP or cluster label data; skipping Fig 1.")
+    if umap_2d_df is None or labels_df is None:
+        print("[WARN] Missing UMAP visualization coordinates or cluster label data; skipping Fig 2.")
         return
 
-    labels = labels_df["cluster_label"].values
+    merged = umap_2d_df.merge(labels_df[["admission_ID", "cluster_label"]], on="admission_ID", how="inner")
+    umap_x = merged["umap_x"].values
+    umap_y = merged["umap_y"].values
+    labels = merged["cluster_label"].values
     unique_clusters = sorted(set(labels))
 
     fig, ax = plt.subplots(figsize=(8, 7))
@@ -116,21 +192,27 @@ def make_umap_cluster_figure(data: dict, out_dir: Path, dpi: int, fmt: str):
         mask = labels == cl
         color = "lightgrey" if cl == -1 else cmap(i % 10)
         label = "Noise" if cl == -1 else f"Cluster {cl}"
-        ax.scatter(umap_2d[mask, 0], umap_2d[mask, 1], c=[color], s=4, alpha=0.6,
+        ax.scatter(umap_x[mask], umap_y[mask], c=[color], s=4, alpha=0.6,
                    linewidths=0, label=label)
 
-    ax.set_xlabel("UMAP-1")
-    ax.set_ylabel("UMAP-2")
-    ax.set_title("UMAP projection of BSI narrative embeddings")
+    ax.set_xlabel("UMAP-1 (visualization only)")
+    ax.set_ylabel("UMAP-2 (visualization only)")
+    ax.set_title("Figure 2: BSI narrative embedding UMAP projection (2D visualization)\n"
+                 "Note: Cluster assignment uses separate 3D UMAP coordinates")
     ax.legend(markerscale=3, fontsize=8, loc="best")
     fig.tight_layout()
-    out_path = out_dir / f"fig1_umap_clusters.{fmt}"
+    out_path = out_dir / f"fig2_umap_clusters.{fmt}"
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"[INFO] Saved: {out_path}")
 
 
 def make_cumulative_incidence_figure(data: dict, out_dir: Path, dpi: int, fmt: str):
+    """Generate Figure 4: in-hospital mortality trajectories (cumulative incidence curves).
+
+    Figure 4: In-hospital mortality trajectories with discharge treated as a
+    competing event (cumulative incidence curves).
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -141,7 +223,7 @@ def make_cumulative_incidence_figure(data: dict, out_dir: Path, dpi: int, fmt: s
 
     ci_df = data.get("ci")
     if ci_df is None:
-        print("[WARN] Missing cumulative incidence data; skipping Fig 3.")
+        print("[WARN] Missing cumulative incidence data; skipping Fig 4.")
         return
 
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -149,23 +231,28 @@ def make_cumulative_incidence_figure(data: dict, out_dir: Path, dpi: int, fmt: s
         ax.step(grp["time"], grp["cumulative_incidence"], where="post",
                 label=f"Cluster {cluster}", linewidth=1.5)
 
-    ax.set_xlabel("Days from bloodstream infection")
-    ax.set_ylabel("Cumulative incidence of 30-day mortality")
-    ax.set_title("Competing-risk cumulative incidence by phenotype cluster")
+    ax.set_xlabel("Days from bloodstream infection index culture")
+    ax.set_ylabel("Cumulative incidence of in-hospital mortality")
+    ax.set_title("Figure 4: In-hospital mortality cumulative incidence by phenotype cluster\n"
+                 "(discharge alive treated as competing event)")
     ax.legend(fontsize=8)
-    ax.set_xlim(0, 30)
     ax.set_ylim(0, 1)
     fig.tight_layout()
-    out_path = out_dir / f"fig3_cumulative_incidence.{fmt}"
+    out_path = out_dir / f"fig4_cumulative_incidence.{fmt}"
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"[INFO] Saved: {out_path}")
 
 
 def make_shap_figure(data: dict, out_dir: Path, dpi: int, fmt: str):
+    """Generate Figure 3 panels: SHAP feature importance per BSI phenotype cluster.
+
+    Figure 3: Microbiological and clinical interpretability of embedding-derived
+    phenotypes (SHAP, phenotype characterization).
+    """
     shap_df = data.get("shap_summary")
     if shap_df is None:
-        print("[WARN] Missing SHAP summary; skipping Fig 4.")
+        print("[WARN] Missing SHAP summary; skipping Fig 3.")
         return
 
     try:
@@ -189,49 +276,120 @@ def make_shap_figure(data: dict, out_dir: Path, dpi: int, fmt: str):
         ax.set_xlabel("Mean |SHAP|")
         ax.invert_yaxis()
 
-    fig.suptitle("Top features by mean |SHAP| per BSI phenotype cluster")
+    fig.suptitle("Figure 3: Top features by mean |SHAP| per BSI phenotype cluster")
     fig.tight_layout()
-    out_path = out_dir / f"fig4_shap_per_cluster.{fmt}"
+    out_path = out_dir / f"fig3_shap_per_cluster.{fmt}"
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[INFO] Saved: {out_path}")
+
+
+def make_early_late_mortality_figure(data: dict, out_dir: Path, dpi: int, fmt: str):
+    """Generate Figure 5: Early and late in-hospital mortality associations.
+
+    Figure 5: Early and late in-hospital mortality associations.
+    This is a stub — extend with forest plot or bar chart as appropriate.
+    """
+    early_df = data.get("early_mortality")
+    late_df = data.get("late_mortality")
+
+    if early_df is None or late_df is None:
+        print("[WARN] Missing early/late mortality data; skipping Fig 5.")
+        return
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARN] matplotlib not installed; skipping Fig 5.", file=sys.stderr)
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    for ax, df, label in [
+        (axes[0], early_df, "Early mortality (0 to landmark day)"),
+        (axes[1], late_df, "Late mortality (beyond landmark day)"),
+    ]:
+        if "cluster" in df.columns and "mortality_rate" in df.columns:
+            ax.bar(df["cluster"].astype(str), df["mortality_rate"])
+            ax.set_xlabel("Cluster")
+            ax.set_ylabel("Mortality rate")
+            ax.set_title(label)
+        else:
+            ax.set_title(f"{label}\n(data columns not as expected)")
+
+    fig.suptitle("Figure 5: Early and late in-hospital mortality by phenotype cluster")
+    fig.tight_layout()
+    out_path = out_dir / f"fig5_early_late_mortality.{fmt}"
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     print(f"[INFO] Saved: {out_path}")
 
 
 def make_table1(data: dict, out_dir: Path):
-    surv_df = data.get("surv_summary")
+    """Table: Baseline cohort characteristics and phenotype characterization."""
     cluster_df = data.get("cluster_summary")
-    if surv_df is None or cluster_df is None:
+    cluster_mortality_df = data.get("cluster_mortality_summary")
+
+    if cluster_df is None:
         print("[WARN] Missing cluster summary for Table 1.")
         return
 
-    t1 = cluster_df.merge(surv_df, on="cluster", how="outer")
+    t1 = cluster_df.copy()
+    if cluster_mortality_df is not None:
+        t1 = t1.merge(cluster_mortality_df, on="cluster", how="outer")
+
     t1.to_csv(out_dir / "table1_cluster_characterization.csv", index=False)
     print(f"[INFO] Saved: {out_dir / 'table1_cluster_characterization.csv'}")
 
 
 def make_table2(data: dict, out_dir: Path):
-    comp_df = data.get("comp_results")
-    if comp_df is None:
-        print("[WARN] Missing comparator CV results for Table 2.")
+    """Table: Comparator concordance (ARI, NMI)."""
+    concordance_df = data.get("concordance")
+    if concordance_df is None:
+        print("[WARN] Missing concordance results for Table 2.")
+        return
+    concordance_df.to_csv(out_dir / "table2_concordance_results.csv", index=False)
+    print(f"[INFO] Saved: {out_dir / 'table2_concordance_results.csv'}")
+
+
+def make_table_backmapping(data: dict, out_dir: Path):
+    """Table: Supervised back-mapping performance (LightGBM OOF)."""
+    cv_df = data.get("backmapping_cv")
+    class_perf_df = data.get("backmapping_class_perf")
+    fi_df = data.get("backmapping_fi")
+
+    if cv_df is None:
+        print("[WARN] Missing backmapping CV results.")
         return
 
-    t2 = comp_df.groupby("model")[["auroc", "average_precision", "brier_score"]].agg(
-        ["mean", "std"]
-    ).round(3)
-    t2.to_csv(out_dir / "table2_comparator_cv.csv")
-    print(f"[INFO] Saved: {out_dir / 'table2_comparator_cv.csv'}")
+    cv_summary = cv_df[["macro_auroc", "macro_recall"]].agg(["mean", "std"]).round(3)
+    cv_summary.to_csv(out_dir / "table_backmapping_cv_summary.csv")
+    print(f"[INFO] Saved: {out_dir / 'table_backmapping_cv_summary.csv'}")
+
+    if class_perf_df is not None:
+        class_perf_df.to_csv(out_dir / "table_backmapping_class_performance.csv", index=False)
+        print(f"[INFO] Saved: {out_dir / 'table_backmapping_class_performance.csv'}")
+
+    if fi_df is not None:
+        fi_df.head(20).to_csv(out_dir / "table_backmapping_top_features.csv", index=False)
+        print(f"[INFO] Saved: {out_dir / 'table_backmapping_top_features.csv'}")
 
 
-def make_table_s1(data: dict, out_dir: Path):
-    fg_df = data.get("fg")
-    if fg_df is None:
-        print("[WARN] Missing Fine-Gray results for Table S1.")
+def make_table_mortality(data: dict, out_dir: Path):
+    """Table: Mortality model estimates (cause-specific Cox)."""
+    cox_df = data.get("cox_results")
+    if cox_df is None:
+        print("[WARN] Missing Cox results for mortality table.")
         return
-    fg_df.to_csv(out_dir / "table_s1_finegray.csv", index=False)
-    print(f"[INFO] Saved: {out_dir / 'table_s1_finegray.csv'}")
+    cox_df.to_csv(out_dir / "table_mortality_cox_results.csv", index=False)
+    print(f"[INFO] Saved: {out_dir / 'table_mortality_cox_results.csv'}")
 
 
 def main():
+    # Figure 1 (study workflow schematic) requires manual assembly and is not generated here.
+
     args = parse_args()
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -240,14 +398,20 @@ def main():
     data = load_inputs(args)
 
     print("[INFO] Generating figures...")
+    # Figure 2: UMAP cluster visualization
     make_umap_cluster_figure(data, out_dir, args.dpi, args.format)
-    make_cumulative_incidence_figure(data, out_dir, args.dpi, args.format)
+    # Figure 3: SHAP interpretability
     make_shap_figure(data, out_dir, args.dpi, args.format)
+    # Figure 4: Cumulative incidence curves
+    make_cumulative_incidence_figure(data, out_dir, args.dpi, args.format)
+    # Figure 5: Early and late mortality
+    make_early_late_mortality_figure(data, out_dir, args.dpi, args.format)
 
     print("[INFO] Generating tables...")
     make_table1(data, out_dir)
     make_table2(data, out_dir)
-    make_table_s1(data, out_dir)
+    make_table_backmapping(data, out_dir)
+    make_table_mortality(data, out_dir)
 
     print(f"[INFO] Done. All outputs in {out_dir}")
 

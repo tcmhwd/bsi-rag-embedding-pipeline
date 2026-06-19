@@ -15,8 +15,15 @@ Each narrative covers:
   - Colonization / resistance flags
   - BSI episode(s): organism, resistance phenotype, early empiric antibiotics, AST
 
-Outcome fields (mortality, discharge status, length of stay) are excluded
-to prevent label leakage before embedding.
+Exclusions:
+  - Pseudonymized patient identifiers are used only for file naming and metadata
+    linkage and are NOT included in the narrative text submitted to the embedding model.
+  - The following outcome-related variables are excluded from narrative text to prevent
+    label leakage before embedding:
+      mortality (30-day, in-hospital), death date, discharge status,
+      length of stay, follow-up duration, time-to-event variables,
+      embedding-derived variables, cluster labels.
+  - Only pre-outcome clinical data available at the time of BSI index culture are included.
 
 Inputs
 ------
@@ -168,6 +175,15 @@ def load_tables(data_dir: Path):
 
 def build_narrative(admission_id: int, df_adm: pd.DataFrame, df_bsi: pd.DataFrame,
                     include_transaminases: bool = False):
+    # Pseudonymized identifiers are used only for file naming and metadata linkage.
+    # They are not included in the narrative text submitted to the embedding model.
+    #
+    # OUTCOME EXCLUSION — the following variables are excluded from narrative text:
+    #   mortality (30-day, in-hospital), death date, discharge status,
+    #   length of stay, follow-up duration, time-to-event variables,
+    #   embedding-derived variables, cluster labels.
+    # Only pre-outcome clinical data available at the time of BSI index culture are included.
+
     sub = df_adm[df_adm["admission_ID"] == admission_id]
     if sub.empty:
         raise ValueError(f"admission_ID {admission_id} not found")
@@ -176,10 +192,9 @@ def build_narrative(admission_id: int, df_adm: pd.DataFrame, df_bsi: pd.DataFram
 
     sections = []
 
-    # Administrative
+    # Administrative — pseudo-ID is omitted; used only for file naming (see save_narrative)
     sections.append("\n".join([
         "[Administrative information (de-identified)]",
-        f"Patient pseudo-ID: {val_or_na(row.get('newpatient_ID'))}",
         f"Age group: {age_band(row.get('age_at_test'))}",
         f"Sex: {val_or_na(row.get('sex'))}",
         f"Admission year: {adm_year(row.get('admission_date'))}",
