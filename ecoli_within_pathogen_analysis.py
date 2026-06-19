@@ -5,7 +5,7 @@
 ecoli_within_pathogen_analysis.py
 
 Within-pathogen sensitivity analysis restricted to Escherichia coli bloodstream
-infection (BSI) hospitalisations. Evaluates whether narrative embedding-based
+infection (BSI) hospitalizations. Evaluates whether narrative embedding-based
 phenotyping can reflect clinically meaningful heterogeneity beyond organism
 identity alone. This analysis is exploratory.
 

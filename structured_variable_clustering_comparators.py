@@ -87,7 +87,12 @@ def parse_args():
     p.add_argument("--n-pca-components", type=int, default=50,
                    help="Number of PCA components before k-means (default: 50)")
     p.add_argument("--kmeans-k-range", type=str, default="2,3,4,5,6,7,8",
-                   help="Comma-separated k values for k-means (default: 2,3,4,5,6,7,8)")
+                   help="Comma-separated k values for k-means sensitivity range (default: 2,3,4,5,6,7,8)")
+    p.add_argument("--selected-k", type=int, default=17,
+                   help="Manuscript-selected k for PCA+k-means comparator (default: 17). "
+                        "Output saved separately as pca_kmeans_selected_k17_labels.csv "
+                        "(or pca_kmeans_selected_k{k}_labels.csv for other values). "
+                        "This k is added to --kmeans-k-range if not already included.")
     p.add_argument("--umap-n-neighbors", type=int, default=15,
                    help="UMAP n_neighbors for structured-variable UMAP (default: 15)")
     p.add_argument("--umap-min-dist", type=float, default=0.1,
@@ -254,8 +259,11 @@ def main():
     contingency_dir = out_dir / "contingency_tables"
     contingency_dir.mkdir(parents=True, exist_ok=True)
 
-    # Parse k_range
+    # Parse k_range; ensure selected_k is always included
     k_range = [int(k.strip()) for k in args.kmeans_k_range.split(",") if k.strip()]
+    selected_k = args.selected_k
+    if selected_k not in k_range:
+        k_range = sorted(set(k_range) | {selected_k})
 
     # Load data
     print("[INFO] Loading feature CSV and embedding-derived cluster labels...")
@@ -304,6 +312,16 @@ def main():
 
     kmeans_label_df.to_csv(out_dir / "pca_kmeans_labels.csv", index=False)
     print(f"[INFO] Saved: {out_dir / 'pca_kmeans_labels.csv'}")
+
+    # Save manuscript-selected k output separately for clarity
+    selected_col = f"kmeans_k{selected_k}_label"
+    if selected_col in kmeans_label_df.columns:
+        selected_df = kmeans_label_df[["admission_ID", selected_col]].rename(
+            columns={selected_col: "cluster_label"}
+        )
+        selected_out = out_dir / f"pca_kmeans_selected_k{selected_k}_labels.csv"
+        selected_df.to_csv(selected_out, index=False)
+        print(f"[INFO] Saved manuscript-selected k={selected_k} labels: {selected_out}")
 
     # --- Structured UMAP + HDBSCAN ---
     print("\n[INFO] Running structured-variable UMAP + HDBSCAN comparator...")

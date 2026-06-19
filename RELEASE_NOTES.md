@@ -1,6 +1,6 @@
 # Release Notes
 
-## v2.0.0 — Phenotyping manuscript release (pending)
+## v2.0.0 — Phenotyping manuscript release
 
 This release aligns the repository with the phenotyping manuscript:
 "Evaluating Narrative Embeddings of Routine Hospital Data for Bloodstream Infection Phenotyping: Retrospective Cohort Study."

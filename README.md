@@ -14,7 +14,7 @@ This repository contains the analysis code for "Evaluating Narrative Embeddings 
 6. **Supervised back-mapping** (`supervised_backmapping.py`): Interpretability audit — train classifiers to recapitulate embedding-derived phenotype labels from structured variables.
 7. **Within-pathogen sensitivity analysis** (`ecoli_within_pathogen_analysis.py`): Repeat UMAP + HDBSCAN phenotyping restricted to E. coli BSI admissions.
 8. **Mortality trajectory analysis** (`mortality_trajectory_analysis.py`): Descriptive in-hospital mortality trajectory analysis by phenotype cluster, with discharge treated as a competing event.
-9. **Figures and tables** (`make_figures_tables.py`): Generate all manuscript figures and tables.
+9. **Figures and tables** (`make_figures_tables.py`): Generate analysis-derived manuscript figures and tables. Figure 1 workflow schematic may require manual assembly.
 10. **Consistency check** (`check_repository_consistency.py`): Verify repository alignment with phenotyping manuscript.
 
 ---
@@ -35,7 +35,7 @@ This applies to both the main embedding-derived phenotyping pipeline (`cluster_e
 
 - **Pseudonymized identifiers** (`newpatient_ID`) are used only for output file naming and metadata linkage. They are not included in the narrative text submitted to the embedding model.
 - **The following variables are excluded from narrative text** to prevent label leakage before embedding: mortality (30-day, in-hospital), death date, discharge status, length of stay, follow-up duration, time-to-event variables, embedding-derived variables, and cluster labels.
-- Only pre-outcome clinical data available at the time of the BSI index culture are included in the narrative.
+- Outcome variables and identifiers are excluded from the narrative text used for embedding generation and cluster assignment. The primary analysis represents retrospective hospitalization-level phenotyping rather than time-zero prognostic prediction; hospitalization-level clinical information may include prespecified BSI episode information when included in the analytic dataset.
 
 ---
 
@@ -51,7 +51,7 @@ This applies to both the main embedding-derived phenotyping pipeline (`cluster_e
 | `supervised_backmapping.py` | Interpretability audit: classify embedding-derived phenotypes from structured variables |
 | `ecoli_within_pathogen_analysis.py` | Within-pathogen sensitivity analysis restricted to E. coli BSI |
 | `mortality_trajectory_analysis.py` | Descriptive in-hospital mortality trajectories by phenotype; Gray test; cause-specific Cox |
-| `make_figures_tables.py` | Generate all manuscript figures and tables |
+| `make_figures_tables.py` | Generate analysis-derived manuscript figures and tables; Figure 1 workflow schematic may require manual assembly |
 | `check_repository_consistency.py` | Heuristic consistency checker for repository-manuscript alignment |
 | `requirements.txt` | Python package dependencies |
 | `legacy_rag_prediction/` | Legacy RAG-LLM mortality-prediction scripts (see below) |
@@ -178,9 +178,12 @@ python structured_variable_clustering_comparators.py \
   --cluster-labels ./clustering_out/hdbscan_labels.csv \
   --out-dir ./comparators_out \
   --n-pca-components 50 \
-  --kmeans-k-range 2,3,4,5,6,7,8 \
+  --selected-k 17 \
+  --kmeans-k-range 2,3,4,5,6,7,8,17 \
   --seed 42
 ```
+
+The manuscript-selected comparator (`--selected-k 17`) is saved separately as `pca_kmeans_selected_k17_labels.csv`. The full k range is retained for sensitivity analyses.
 
 ---
 

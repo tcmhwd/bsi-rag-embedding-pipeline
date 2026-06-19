@@ -11,7 +11,7 @@ Each narrative covers:
   - De-identified administrative information (age band, sex, admission year, department)
   - Comorbidities (Charlson categories and score, ICD-10 infection categories)
   - Severity and organ support (ICU, vasopressors, SOFA, qSOFA)
-  - Physiology and labs at index culture time
+  - Physiology and labs (hospitalization-level, available in the analytic dataset)
   - Colonization / resistance flags
   - BSI episode(s): organism, resistance phenotype, early empiric antibiotics, AST
 
@@ -23,7 +23,11 @@ Exclusions:
       mortality (30-day, in-hospital), death date, discharge status,
       length of stay, follow-up duration, time-to-event variables,
       embedding-derived variables, cluster labels.
-  - Only pre-outcome clinical data available at the time of BSI index culture are included.
+  - Outcome variables and identifiers are excluded from the narrative text used for embedding
+    generation and cluster assignment. The primary analysis represents retrospective
+    hospitalization-level phenotyping rather than time-zero prognostic prediction;
+    hospitalization-level clinical information may include prespecified BSI episode information
+    when included in the analytic dataset.
 
 Inputs
 ------
@@ -182,7 +186,11 @@ def build_narrative(admission_id: int, df_adm: pd.DataFrame, df_bsi: pd.DataFram
     #   mortality (30-day, in-hospital), death date, discharge status,
     #   length of stay, follow-up duration, time-to-event variables,
     #   embedding-derived variables, cluster labels.
-    # Only pre-outcome clinical data available at the time of BSI index culture are included.
+    # Outcome variables and identifiers are excluded from the narrative text used for embedding
+    # generation and cluster assignment. The primary analysis represents retrospective
+    # hospitalization-level phenotyping rather than time-zero prognostic prediction;
+    # hospitalization-level clinical information may include prespecified BSI episode information
+    # when included in the analytic dataset.
 
     sub = df_adm[df_adm["admission_ID"] == admission_id]
     if sub.empty:
@@ -224,7 +232,7 @@ def build_narrative(admission_id: int, df_adm: pd.DataFrame, df_bsi: pd.DataFram
 
     # Physiology / labs
     lab_vars = LAB_VARS + (["AST", "ALT"] if include_transaminases else [])
-    lab_lines = ["[Physiology and labs (at index culture time)]"]
+    lab_lines = ["[Physiology and labs]"]
     for v in lab_vars:
         lab_lines.append(f"{v}: {val_or_na(row.get(v))}")
     sections.append("\n".join(lab_lines))
